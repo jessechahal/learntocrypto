@@ -1,0 +1,13 @@
+{
+  "name": "7gates-learntocrypto-jessechahal",
+  "version": "0.0.1",
+  "license": "SEE LICENSE IN LICENSE",
+  "description": "Assignment 1, learntocrypto from https://github.com/sodium-friends/learntocrypto",
+  "author": {
+    "name": "Jesse Chahal <jesse@jessechahal.com> (https://github.com/jessechahal)"
+  },
+  "repository": "ssh://git@github.com/jessechahal/learntocrypto.git",
+  "dependencies": {
+    "duplex-json-stream": "^1.0.1"
+  }
+}

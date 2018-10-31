@@ -1,0 +1,6 @@
+.idea/
+bank_transactionLogs.json
+**/bank_transactionLogs.json
+node_modules/
+yarn-error.log
+yarn.lock
