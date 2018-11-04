@@ -8,6 +8,9 @@
   },
   "repository": "ssh://git@github.com/jessechahal/learntocrypto.git",
   "dependencies": {
-    "duplex-json-stream": "^1.0.1"
+    "duplex-json-stream": "^1.0.1",
+    "log4js": "^3.0.6",
+    "sodium-native": "^2.2.2",
+    "web3": "^1.0.0-beta.36"
   }
 }
