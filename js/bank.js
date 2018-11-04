@@ -1,24 +1,38 @@
 /**
  * Created by jesse on 2018-10-29.
  */
-
 // bank.js
+
+// from assignment 01
 var jsonStream = require('duplex-json-stream');
 var net = require('net');
 var fs = require('fs');
-var log4js = require('log4js');
 
+//logger config
+var log4js = require('log4js');
 log4js.configure({
     appenders: { out: { type: 'stdout', layout: { type: 'colored' } } },
     categories: { default: { appenders: ['out'], level: 'info' } }
 });
-var log = log4js.getLogger();
-log.level = 'info'; // default level is OFF - which means no logs at all.
+var log = log4js.getLogger("bank");
+log.level = 'debug'; // default level is OFF - which means no logs at all.
 
+//web3 config
+var Web3 = require('web3');
+var web3 = new Web3();
+web3.setProvider(new web3.providers.HttpProvider());
+var Web3Accounts = require('web3-eth-accounts');
+var accounts = new Web3Accounts(new web3.providers.HttpProvider());
 
-var transactionLogFilename = "./bank_transactionLogs.json";
+//globals
+const transactionLogFilepath = "./bank_transactionLogs.json";
+const privateKeystoreFilepath = "./bank_keystore.encrypted.json";
+const privateKeystorePassword = "password";
+
 var transactionLog = [];
+var myAccount = null;
 
+//functions below
 function reduce(someArray) {
     var totalBalance = 0;
     log.debug("",someArray);
@@ -36,14 +50,12 @@ function reduce(someArray) {
             }
         }
     }
-    //transactionLog.forEach(function(x) { x['cmd'] == 'deposit' ? totalBalance += x['amount'] : totalBalance -= x['amount']});
+    //transactionLog.forEach(function(x) { x['cmd'] == 'deposit' ?
+    //   totalBalance += x['amount'] : totalBalance -= x['amount']});
     return totalBalance;
 }
 
-var Web3 = require('web3');
-var web3 = new Web3();
-web3.setProvider(new web3.providers.HttpProvider());
-function hashToHex(valueToHash) {
+function hashText(valueToHash) {
     "use strict";
     return web3.eth.accounts.hashMessage(valueToHash);
 }
@@ -54,46 +66,51 @@ var genesisHash = "0x" + Buffer.alloc(32).toString('hex');
 
 function appendToTransactionLog (transLog, entry) {
     var prevHash = transLog.length ? transLog[transLog.length - 1].hash : genesisHash;
+    currentHash = hashText(prevHash + JSON.stringify(entry));
     log.debug("prevHash: " + prevHash);
     transLog.push({
         value: entry,
-        hash: hashToHex(prevHash + JSON.stringify(entry))
+        hash: currentHash,
+        signature: myAccount.sign(currentHash).signature
     })
 }
 
-function writeTransactionLogFile() {
+function writeLocalFile(filepath, fileContents) {
     "use strict";
 
-    fs.writeFile(transactionLogFilename, JSON.stringify(transactionLog, null, 2), function (err) {
+    fs.writeFile(filepath, fileContents, (err) => {
         if (err) {
-            log.error('saving file failed');
+            log.error("saving '%s' failed", filepath);
             throw err;
         }
-        log.info('Transaction logs saved to: ' + transactionLogFilename);
+        log.info("File saved successfully to: ", filepath);
     });
+};
+
+function readLocalFile(filepath) {
+    try {
+        return fs.readFileSync(filepath, 'utf8')
+    } catch (exception) {
+        log.info("'%s' file was NOT FOUND, starting from scratch", filepath);
+        log.debug(exception);
+        return null;
+    }
 };
 
 function verifyLog() {
     newLog = [];
-
+    var equal = require('deep-equal');
     for(let entry of transactionLog) {
         appendToTransactionLog(newLog, entry.value);
     }
-    return JSON.stringify(newLog) == JSON.stringify(transactionLog);
+    //log.debug("newLog = %s", JSON.stringify(newLog));
+    //log.debug("transactionLog = %s", JSON.stringify(transactionLog));
+
+    return JSON.stringify(newLog) === JSON.stringify(transactionLog);
+    //return equal(newLog, transactionLog);
 }
 
-function readTransactionLogFile() {
-    "use strict";
-
-    try {
-        return require(transactionLogFilename);
-        log.info(transactionLogFilename + " was FOUND, reading transaction logs from file");
-    } catch (exception) {
-        log.info(transactionLogFilename + " file was NOT FOUND, starting from scratch");
-
-        return [];
-    }
-};
+//'main' method related commands below
 
 var server = net.createServer(function (socket) {
     socket = jsonStream(socket);
@@ -108,13 +125,13 @@ var server = net.createServer(function (socket) {
 
             case 'deposit':
                 appendToTransactionLog(transactionLog, msg);
-                writeTransactionLogFile();
+                writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
                 socket.write({cmd: 'deposit', balance: reduce(transactionLog)});
                 break;
 
             case 'withdraw':
                 appendToTransactionLog(transactionLog, msg);
-                writeTransactionLogFile();
+                writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
                 socket.write({cmd: 'withdraw', balance: reduce(transactionLog)});
                 break;
 
@@ -127,11 +144,50 @@ var server = net.createServer(function (socket) {
     })
 });
 
-transactionLog = readTransactionLogFile();
-if(transactionLog.length > 0 && !verifyLog()) {
-    log.warn("transaction log file has been modified, ignoring file ");
-    log.debug(transactionLog);
-    transactionLog = []
+log.info("Starting Bank server...");
+
+var privateKeystore = readLocalFile(privateKeystoreFilepath);
+
+if(privateKeystore == null) {
+    log.debug(privateKeystore);
+    log.warn("Failed to find '%s'. Generating new key-pair", privateKeystoreFilepath);
+
+    myAccount = accounts.create();
+    privateKeystore = myAccount.privateKey;
+    //writeLocalFile(privateKeystoreFilepath, privateKeystore.toString());
+    writeLocalFile(privateKeystoreFilepath, JSON.stringify(myAccount.encrypt(privateKeystorePassword), null, 2));
+    log.info("Generated new key-pair, public key: '%s'", myAccount.address);
+    log.debug(myAccount);
+
+    //garabageTransactionFile = JSON.parse(readLocalFile(transactionLogFilepath));
+    garabageTransactionFile = readLocalFile(transactionLogFilepath);
+    if(garabageTransactionFile) {
+        log.warn("Found '%s' but since we had to regenerate key-pair need to throwaway file contents",
+            transactionLogFilepath);
+        fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+    }
+
+//only load transactionLog if both private & public key could be loaded. Else we cannot validate or extend the log
+} else {
+    log.info("Found '%s' file", privateKeystoreFilepath);
+    //myAccount = accounts.privateKeyToAccount(privateKeystore);
+    myAccount = accounts.decrypt(JSON.parse(privateKeystore), privateKeystorePassword);
+
+    transactionLogFileContents = readLocalFile(transactionLogFilepath);
+    if (transactionLogFileContents)
+        transactionLog = JSON.parse(transactionLogFileContents);
+    else
+        transactionLog = [];
+
+    if(transactionLog.length > 0 && !verifyLog()) {
+        log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
+        log.debug("transactionLog: ", transactionLog);
+        fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+        transactionLog = [];
+    } else if (transactionLog.length > 0) {
+        log.info("Found '%s' file. Verified transactions and all looks good", transactionLogFilepath)
+    }
 }
+
 
 server.listen(3876);
