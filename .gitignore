@@ -1,6 +1,8 @@
 .idea/
 bank_transactionLogs.json
 **/bank_transactionLogs.json
+bank_keystore.encrypted.json
+symmetrickey
 node_modules/
 yarn-error.log
 yarn.lock

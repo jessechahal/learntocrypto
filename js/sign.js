@@ -11,7 +11,6 @@ var log = log4js.getLogger();
 log.level = 'debug';
 
 
-// teller.js
 if (process.argv.length >= 3) {
     log.debug(process.argv);
 
