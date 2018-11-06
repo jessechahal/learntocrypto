@@ -9,7 +9,7 @@ var Web3 = require('web3');
 var web3 = new Web3();
 web3.setProvider(new web3.providers.HttpProvider());
 
-const symKeyFilepath = "./symmetricKey"
+const symKeyFilepath = "./symmetricKeyBuf"
 
 function writeLocalFile(filepath, fileContents) {
     "use strict";
@@ -42,14 +42,14 @@ var sodium = require('sodium-native');
 
 var key = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES); // secure buffer
 /*
-var nonce = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
+var nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
 var message = Buffer.from('Hello, World!');
 var ciphertext = Buffer.alloc(message.length + sodium.crypto_secretbox_MACBYTES);
 
-sodium.randombytes_buf(nonce); // insert random data into nonce
+sodium.randombytes_buf(nonceBuf); // insert random data into nonceBuf
 */
 sodium.randombytes_buf(key);  // insert random data into key
 
 writeLocalFile(symKeyFilepath, key.toString('base64'));
 
-//sodium.crypto_secretbox_easy(cipherMsgBuf, Buffer.from(message), nonce, secretKey);
+//sodium.crypto_secretbox_easy(cipherMsgBuf, Buffer.from(message), nonceBuf, secretKey);

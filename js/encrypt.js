@@ -22,7 +22,7 @@ if (process.argv.length >= 4) {
     var messageBuf = Buffer.from(process.argv[3]);
 
     var nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
-    sodium.randombytes_buf(nonceBuf); // insert random data into nonce
+    sodium.randombytes_buf(nonceBuf); // insert random data into nonceBuf
     var cipherTextBuf = Buffer.alloc(messageBuf.length + sodium.crypto_secretbox_MACBYTES);
 
 

@@ -7,6 +7,7 @@
 var jsonStream = require('duplex-json-stream');
 var net = require('net');
 var fs = require('fs');
+var sodium = require('sodium-native');
 
 //logger config
 var log4js = require('log4js');
@@ -25,12 +26,18 @@ var Web3Accounts = require('web3-eth-accounts');
 var accounts = new Web3Accounts(new web3.providers.HttpProvider());
 
 //globals
-const transactionLogFilepath = "./bank_transactionLogs.json";
-const privateKeystoreFilepath = "./bank_keystore.encrypted.json";
+const transactionLogFilepath = "./bank_transactionLogs.encrypted";
+const privateKeystoreFilepath = "./bank_keystore.encrypted.json"; //used to sign transaction hashes
 const privateKeystorePassword = "password";
+//used for encrypting files before writing to disk
+const symmetricKeyFilepath = "./bank_symmetric.encryption.key.base64";
+//const nonceFilepath = "./bank_transactionLogs.nonceBuf.base64.txt";
 
 var transactionLog = [];
 var myAccount = null;
+//var symmetricKey = null;
+var symmetricKeyBuf = null;
+//var nonceBuf = null;
 
 //functions below
 function reduce(someArray) {
@@ -57,7 +64,7 @@ function reduce(someArray) {
 
 function hashText(valueToHash) {
     "use strict";
-    return web3.eth.accounts.hashMessage(valueToHash);
+    return web3.utils.sha3(valueToHash);
 }
 
 // One edge-case with referring to the previous hash is that you need a
@@ -87,9 +94,19 @@ function writeLocalFile(filepath, fileContents) {
     });
 };
 
-function readLocalFile(filepath) {
+function readLocalFile(filepath, encoding="utf8") {
     try {
-        return fs.readFileSync(filepath, 'utf8')
+        return fs.readFileSync(filepath, encoding)
+    } catch (exception) {
+        log.info("'%s' file was NOT FOUND, starting from scratch", filepath);
+        log.debug(exception);
+        return null;
+    }
+};
+
+function readLocalFileIntoBuffer(filepath) {
+    try {
+        return fs.readFileSync(filepath)
     } catch (exception) {
         log.info("'%s' file was NOT FOUND, starting from scratch", filepath);
         log.debug(exception);
@@ -98,16 +115,162 @@ function readLocalFile(filepath) {
 };
 
 function verifyLog() {
-    newLog = [];
-    var equal = require('deep-equal');
+    verificationLog = [];
+    //var equal = require('deep-equal');
     for(let entry of transactionLog) {
-        appendToTransactionLog(newLog, entry.value);
+        appendToTransactionLog(verificationLog, entry.value);
     }
-    //log.debug("newLog = %s", JSON.stringify(newLog));
-    //log.debug("transactionLog = %s", JSON.stringify(transactionLog));
+    log.debug("verificationLog = %s", JSON.stringify(verificationLog));
+    log.debug("transactionLog = %s", JSON.stringify(transactionLog));
 
-    return JSON.stringify(newLog) === JSON.stringify(transactionLog);
+    return JSON.stringify(verificationLog) === JSON.stringify(transactionLog);
     //return equal(newLog, transactionLog);
+}
+
+function writeLocalEncryptedFile(filepath, fileContents, keyBuf) {
+    "use strict";
+    var messageBuf = Buffer.from(fileContents, "utf8");
+    var nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
+    sodium.randombytes_buf(nonceBuf); // insert random data into nonceBuf
+    var cipherTextBuf = Buffer.alloc(messageBuf.length + sodium.crypto_secretbox_MACBYTES);
+    sodium.crypto_secretbox_easy(cipherTextBuf, messageBuf, Buffer.from(nonceBuf), Buffer.from(keyBuf));
+
+    fs.writeFile(filepath, cipherTextBuf.toString("base64"), (err) => {
+        if (err) {
+            log.error("saving encrypted '%s' failed", filepath);
+            throw err;
+        }
+        log.info("File saved & encrypted successfully to: ", filepath);
+    });
+    fs.writeFile(filepath + ".nonce", nonceBuf.toString('base64'), (err) => {
+        if (err) {
+            log.error("saving '%s' failed", filepath + ".nonce");
+            throw err;
+        }
+        log.info("Nonce file saved successfully to: ", filepath + ".nonce");
+    });
+};
+
+function decryptLocalFile(filepath, keyBuf, nonceBuf) {
+    "use strict";
+    var cipherTextBuf = readLocalFileIntoBuffer(filepath);
+    log.debug("CypherText to decrypt: ", cipherTextBuf.toString());
+
+    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
+
+    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+
+    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
+            cipherTextBuf, Buffer.from(nonceBuf), Buffer.from(keyBuf))) {
+        log.error('Decryption failed!');
+        //return null;
+        plainTextBuf.toString("hex")
+    } else {
+        log.info("decryption of contents completed");
+        return plainTextBuf.toString("utf8");
+    }
+}
+
+/*
+Read nonce directly from disk instead of having buffer passed in
+ */
+function decryptLocalFile2(filepath, keyBuf) {
+    "use strict";
+    var cipherTextBuf = readLocalFileIntoBuffer(filepath);
+    var nonceBuf = readLocalFileIntoBuffer(filepath + ".nonce");
+    log.debug("CypherText to decrypt: ", Buffer.from(cipherTextBuf).toString());
+    log.debug("nonceBuf: ", nonceBuf.toString());
+
+    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
+
+    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+
+    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
+            cipherTextBuf, nonceBuf, Buffer.from(keyBuf))) {
+        log.error('Decryption failed!');
+        //return null;
+        plainTextBuf.toString("base64")
+    } else {
+        log.info("decryption of contents completed");
+        return plainTextBuf.toString("utf8");
+    }
+}
+
+/*
+attempt 3
+read all files directly from disk. Goal is to prevent Buffer reuse
+ */
+function decryptLocalFile3(encryptedTextFilepath, symmetricKeyFilepath, nonceFilepath) {
+    "use strict";
+    var cipherTextBuf = readLocalFileIntoBuffer(encryptedTextFilepath);
+    var symmetricKeyBuf = readLocalFileIntoBuffer(symmetricKeyFilepath);
+    var nonceBuf = readLocalFileIntoBuffer(nonceFilepath);
+
+    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
+
+    log.debug("CypherText: ", Buffer.from(cipherTextBuf).toString());
+    log.debug("Nonce: ", nonceBuf.toString());
+    log.debug("symmetricKey: ", symmetricKeyBuf.toString());
+
+    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+
+    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
+            cipherTextBuf, nonceBuf, symmetricKeyBuf)) {
+        log.error('Decryption failed!');
+        //return null;
+        plainTextBuf.toString("base64")
+    } else {
+        log.info("decryption of contents completed");
+        return plainTextBuf.toString("utf8");
+    }
+}
+
+/*
+attempt 4
+when reading files from disk use base64 encoding
+ */
+function decryptLocalFile4(encryptedTextFilepath, symmetricKeyFilepath, nonceFilepath) {
+    "use strict";
+    var cipherText = readLocalFile(encryptedTextFilepath, "base64");
+    var symmetricKey = readLocalFile(symmetricKeyFilepath, "base64");
+    var nonce = readLocalFile(nonceFilepath, "base64");
+
+    var cipherTextBuf = Buffer.from(cipherText);
+    var symmetricKeyBuf = Buffer.from(symmetricKey);
+    var nonceBuf = Buffer.from(nonce);
+
+    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
+
+    log.debug("CypherText: ", Buffer.from(cipherTextBuf).toString());
+    log.debug("Nonce: ", nonceBuf.toString());
+    log.debug("symmetricKey: ", symmetricKeyBuf.toString());
+
+    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+
+    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
+            cipherTextBuf, nonceBuf, symmetricKeyBuf)) {
+        log.error('Decryption failed!');
+        //return null;
+        plainTextBuf.toString("base64")
+    } else {
+        log.info("decryption of contents completed");
+        return plainTextBuf.toString("utf8");
+    }
+}
+
+function decryptContents(keyBuf, nonceBuf, contents) {
+    "use strict";
+
+    var cipherTextBuf = Buffer.from(contents, "base64");
+    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
+
+    if (!sodium.crypto_secretbox_open_easy(plainTextBuf, cipherTextBuf, nonceBuf, Buffer.from(keyBuf))) {
+        log.error('Decryption failed!');
+        return null;
+    } else {
+        log.info("decryption of contents completed");
+        return plainTextBuf.toString()
+    }
 }
 
 //'main' method related commands below
@@ -125,13 +288,14 @@ var server = net.createServer(function (socket) {
 
             case 'deposit':
                 appendToTransactionLog(transactionLog, msg);
-                writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+                writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
                 socket.write({cmd: 'deposit', balance: reduce(transactionLog)});
                 break;
 
             case 'withdraw':
                 appendToTransactionLog(transactionLog, msg);
-                writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+                //writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+                writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
                 socket.write({cmd: 'withdraw', balance: reduce(transactionLog)});
                 break;
 
@@ -146,47 +310,85 @@ var server = net.createServer(function (socket) {
 
 log.info("Starting Bank server...");
 
-var privateKeystore = readLocalFile(privateKeystoreFilepath);
+symmetricKeyBuf = readLocalFileIntoBuffer(symmetricKeyFilepath);
+if(!symmetricKeyBuf){
+    log.debug(symmetricKeyBuf);
+    log.warn("Failed to find '%s'. Generating new symmetric encryption key", symmetricKeyFilepath);
 
-if(privateKeystore == null) {
+    symmetricKeyBuf = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES);
+    sodium.randombytes_buf(symmetricKeyBuf);
+    writeLocalFile(symmetricKeyFilepath, Buffer.from(symmetricKeyBuf).toString('base64'));
+    log.info("Generated new symmetric key '%s'", symmetricKeyFilepath)
+} else {
+    log.info("Found '%s' file", symmetricKeyFilepath);
+}
+
+var nonceBuf = readLocalFileIntoBuffer(transactionLogFilepath + ".nonce");
+if(!nonceBuf) {
+    log.debug("nonceBuf: ", nonceBuf);
+    log.warn("Failed to find '%s'. Generating new nonceBuf", transactionLogFilepath + ".nonce");
+
+    nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
+    sodium.randombytes_buf(nonceBuf); // insert random data into nonceBuf
+
+    writeLocalFile(transactionLogFilepath + ".nonce", Buffer.from(nonceBuf).toString('base64'));
+    log.info("Generated new nonceBuf");
+    log.debug("New nonceBuf: ", nonceBuf);
+} else {
+    log.info("Found '%s' file", transactionLogFilepath + ".nonce");
+}
+
+var privateKeystore = readLocalFile(privateKeystoreFilepath);
+if(privateKeystore) {
+    log.info("Found '%s' file", privateKeystoreFilepath);
+    myAccount = accounts.decrypt(privateKeystore, privateKeystorePassword);
+} else {
     log.debug(privateKeystore);
     log.warn("Failed to find '%s'. Generating new key-pair", privateKeystoreFilepath);
 
     myAccount = accounts.create();
     privateKeystore = myAccount.privateKey;
-    //writeLocalFile(privateKeystoreFilepath, privateKeystore.toString());
     writeLocalFile(privateKeystoreFilepath, JSON.stringify(myAccount.encrypt(privateKeystorePassword), null, 2));
     log.info("Generated new key-pair, public key: '%s'", myAccount.address);
-    log.debug(myAccount);
+    log.debug("myAccount: ", myAccount);
+}
 
-    //garabageTransactionFile = JSON.parse(readLocalFile(transactionLogFilepath));
-    garabageTransactionFile = readLocalFile(transactionLogFilepath);
-    if(garabageTransactionFile) {
-        log.warn("Found '%s' but since we had to regenerate key-pair need to throwaway file contents",
-            transactionLogFilepath);
-        fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+
+var transactionLogFileContentsEncrypted = readLocalFile(transactionLogFilepath, "base64");
+if(transactionLogFileContentsEncrypted) {
+    log.info("Found '%s' file", transactionLogFilepath);
+    log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
+    //var transactionLogFileContents = decryptLocalFile(transactionLogFilepath, symmetricKeyBuf, nonceBuf);
+    //var transactionLogFileContents = decryptLocalFile2(transactionLogFilepath, symmetricKeyBuf);
+    //var transactionLogFileContents = decryptContents(symmetricKeyBuf, nonceBuf, transactionLogFileContentsEncrypted);
+    var transactionLogFileContents = decryptLocalFile3(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
+    //var transactionLogFileContents = decryptLocalFile4(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
+    log.debug("transactionLogFileContents: ", transactionLogFileContents);
+
+    if (transactionLogFileContents) {
+        log.debug("parsing transactionLog into JSON");
+        transactionLog = JSON.parse(JSON.stringify(transactionLogFileContents, null, 2));
+    } else {
+        log.warn("Something seems wrong with transactionLog contents. Creating an empty transactionLog");
+        transactionLog = [];
     }
 
-//only load transactionLog if both private & public key could be loaded. Else we cannot validate or extend the log
 } else {
-    log.info("Found '%s' file", privateKeystoreFilepath);
-    //myAccount = accounts.privateKeyToAccount(privateKeystore);
-    myAccount = accounts.decrypt(JSON.parse(privateKeystore), privateKeystorePassword);
+    log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
+    log.warn("Failed to find '%s'. Generating new transactionLog", transactionLogFilepath);
 
-    transactionLogFileContents = readLocalFile(transactionLogFilepath);
-    if (transactionLogFileContents)
-        transactionLog = JSON.parse(transactionLogFileContents);
-    else
-        transactionLog = [];
+    writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+    log.info("Generated new transactionLogFile to '%s'", transactionLogFilepath);
+}
 
-    if(transactionLog.length > 0 && !verifyLog()) {
-        log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
-        log.debug("transactionLog: ", transactionLog);
-        fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
-        transactionLog = [];
-    } else if (transactionLog.length > 0) {
-        log.info("Found '%s' file. Verified transactions and all looks good", transactionLogFilepath)
-    }
+
+if(transactionLog.length > 0 && !verifyLog()) {
+    log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
+    log.debug("transactionLog: ", transactionLog);
+    fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+    transactionLog = [];
+} else if (transactionLog.length > 0) {
+    log.info("Found '%s' file. Verified transactions and all looks good", transactionLogFilepath)
 }
 
 
