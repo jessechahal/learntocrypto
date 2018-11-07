@@ -74,7 +74,7 @@ var genesisHash = "0x" + Buffer.alloc(32).toString('hex');
 
 function appendToTransactionLog (transLog, entry) {
     var prevHash = transLog.length ? transLog[transLog.length - 1].hash : genesisHash;
-    currentHash = hashText(prevHash + JSON.stringify(entry));
+    var currentHash = hashText(prevHash + JSON.stringify(entry));
     log.debug("prevHash: " + prevHash);
     transLog.push({
         value: entry,
@@ -116,13 +116,16 @@ function readLocalFileIntoBuffer(filepath) {
 };
 
 function verifyLog() {
-    verificationLog = [];
+    var verificationLog = [];
     //var equal = require('deep-equal');
-    for(let entry of transactionLog) {
-        appendToTransactionLog(verificationLog, entry.value);
+    //for(let entry of transactionLog) {
+    log.debug(transactionLog);
+    for( var i = 0; i < transactionLog.length; i++) {
+        log.debug("verifyLog() entry = ", transactionLog[i])
+        appendToTransactionLog(verificationLog, transactionLog[i].value);
     }
-    log.debug("verificationLog = %s", JSON.stringify(verificationLog));
-    log.debug("transactionLog = %s", JSON.stringify(transactionLog));
+    log.debug("verifyLog() verificationLog = %s", JSON.stringify(verificationLog));
+    log.debug("verifyLog() transactionLog = %s", JSON.stringify(transactionLog));
 
     return JSON.stringify(verificationLog) === JSON.stringify(transactionLog);
     //return equal(newLog, transactionLog);
@@ -200,7 +203,7 @@ var server = net.createServer(function (socket) {
                     if (customerIds.includes(msg.customerId)) {
                         socket.write({cmd: 'balance', customerId: msg.customerId, balance: reduceCustomer(transactionLog, msg.customerId)});
                     } else {
-                        socket.write('customerId is not registered. Please call register cmd first', msg);
+                        socket.write("customerId is not registered. Please call 'register' cmd first", msg);
                     }
                 } else {
                     socket.write('missing customerId', msg);
@@ -313,7 +316,7 @@ if(transactionLogFileContentsEncrypted) {
 
     if (transactionLogFileContents) {
         log.debug("parsing transactionLog into JSON");
-        transactionLog = JSON.parse(JSON.stringify(transactionLogFileContents, null, 2));
+        transactionLog = JSON.parse(transactionLogFileContents);
     } else {
         log.warn("Something seems wrong with transactionLog contents. Creating an empty transactionLog");
         transactionLog = [];
@@ -329,9 +332,10 @@ if(transactionLogFileContentsEncrypted) {
 
 
 if(transactionLog.length > 0 && !verifyLog()) {
-    log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
     log.debug("transactionLog: ", transactionLog);
-    fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+    //log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
+    //fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
+    log.warn("'%s' file has been modified, ignoring file contents.", transactionLogFilepath);
     transactionLog = [];
 } else if (transactionLog.length > 0) {
     log.info("Found '%s' file. Verified transactions and all looks good", transactionLogFilepath)
