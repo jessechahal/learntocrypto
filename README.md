@@ -1,12 +1,14 @@
 
 # learntocrypto
 
-## Author
-github.com/jessechahal
-
 
 The goal of this project is to complete the assignments in [https://github.com/sodium-friends/learntocrypto](https://github.com/sodium-friends/learntocrypto)
 while replacing the usage of libsodium with Ethereum's Web3js library where ever possible.
+
+## Author
+[https://github.com/jessechahal](https://github.com/jessechahal)
+
+
 
 
 
