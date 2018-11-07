@@ -34,31 +34,32 @@ const symmetricKeyFilepath = "./bank_symmetric.encryption.key.base64";
 //const nonceFilepath = "./bank_transactionLogs.nonceBuf.base64.txt";
 
 var transactionLog = [];
+var customerIds = [];
 var myAccount = null;
 //var symmetricKey = null;
 var symmetricKeyBuf = null;
 //var nonceBuf = null;
 
-//functions below
-function reduce(someArray) {
+//functions below=
+function reduceCustomer(someArray, customerIdFilter) {
     var totalBalance = 0;
-    log.debug("",someArray);
+    var customerExists = false;
+    log.debug("reduceCustomer() customerId: ", customerIdFilter);
+    log.debug("reduceCustomer() someArray: ", someArray);
     for(let transaction of someArray) {
-        if (transaction.value.cmd == 'deposit') {
-            totalBalance += parseInt(transaction.value.amount, 10);
-        } else {
-            var tempBalance = totalBalance;
-            tempBalance -= parseInt(transaction.value.amount, 10);
-
-            if(tempBalance >= 0) {
-                totalBalance = tempBalance;
-            } else {
-                console.log("Withdrew too much money, cannot process transaction")
+        if (transaction.value.customerId === customerIdFilter) {
+            if (transaction.value.cmd == 'deposit') {
+                totalBalance += parseInt(transaction.value.amount, 10);
+            }
+            else if (transaction.value.cmd == 'withdraw') {
+                totalBalance -= parseInt(transaction.value.amount, 10);
+                if (totalBalance < 0) {
+                    log.warn("customerId '%s' withdrew too much money. " +
+                        "In real world they would owe bank overdraft-fee", customerIdFilter);
+                }
             }
         }
     }
-    //transactionLog.forEach(function(x) { x['cmd'] == 'deposit' ?
-    //   totalBalance += x['amount'] : totalBalance -= x['amount']});
     return totalBalance;
 }
 
@@ -164,7 +165,7 @@ function decryptLocalFile(filepath, keyBuf, nonceBuf) {
             cipherTextBuf, Buffer.from(nonceBuf), Buffer.from(keyBuf))) {
         log.error('Decryption failed!');
         //return null;
-        plainTextBuf.toString("hex")
+        plainTextBuf.toString("base64")
     } else {
         log.info("decryption of contents completed");
         return plainTextBuf.toString("utf8");
@@ -183,8 +184,6 @@ function decryptLocalFile2(filepath, keyBuf) {
 
     var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
 
-    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
-
     if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
             cipherTextBuf, nonceBuf, Buffer.from(keyBuf))) {
         log.error('Decryption failed!');
@@ -198,9 +197,9 @@ function decryptLocalFile2(filepath, keyBuf) {
 
 /*
 attempt 3
-read all files directly from disk. Goal is to prevent Buffer reuse
+read all files directly from disk directly into buffer. Goal vs v2 is to prevent Buffer reuse
  */
-function decryptLocalFile3(encryptedTextFilepath, symmetricKeyFilepath, nonceFilepath) {
+function decryptLocalFile3(encryptedTextFilepath, nonceFilepath, symmetricKeyFilepath) {
     "use strict";
     var cipherTextBuf = readLocalFileIntoBuffer(encryptedTextFilepath);
     var symmetricKeyBuf = readLocalFileIntoBuffer(symmetricKeyFilepath);
@@ -208,11 +207,9 @@ function decryptLocalFile3(encryptedTextFilepath, symmetricKeyFilepath, nonceFil
 
     var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
 
-    log.debug("CypherText: ", Buffer.from(cipherTextBuf).toString());
-    log.debug("Nonce: ", nonceBuf.toString());
-    log.debug("symmetricKey: ", symmetricKeyBuf.toString());
-
-    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+    log.debug("CypherText:", Buffer.from(cipherTextBuf).toString());
+    log.debug("Nonce:", nonceBuf.toString());
+    log.debug("SymmetricKey:", symmetricKeyBuf.toString());
 
     if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
             cipherTextBuf, nonceBuf, symmetricKeyBuf)) {
@@ -227,13 +224,19 @@ function decryptLocalFile3(encryptedTextFilepath, symmetricKeyFilepath, nonceFil
 
 /*
 attempt 4
-when reading files from disk use base64 encoding
+when reading files from disk as text and then put into buffer
  */
-function decryptLocalFile4(encryptedTextFilepath, symmetricKeyFilepath, nonceFilepath) {
+function decryptLocalFile4(encryptedTextFilepath, nonceFilepath, symmetricKeyFilepath) {
     "use strict";
-    var cipherText = readLocalFile(encryptedTextFilepath, "base64");
-    var symmetricKey = readLocalFile(symmetricKeyFilepath, "base64");
-    var nonce = readLocalFile(nonceFilepath, "base64");
+    /*
+    var cipherText = readLocalFile(encryptedTextFilepath, "base64").trim();
+    var symmetricKey = readLocalFile(symmetricKeyFilepath, "base64").trim();
+    var nonce = readLocalFile(nonceFilepath, "base64").trim();
+    */
+
+    var cipherText = readLocalFile(encryptedTextFilepath).trim();
+    var symmetricKey = readLocalFile(symmetricKeyFilepath).trim();
+    var nonce = readLocalFile(nonceFilepath).trim();
 
     var cipherTextBuf = Buffer.from(cipherText);
     var symmetricKeyBuf = Buffer.from(symmetricKey);
@@ -241,11 +244,11 @@ function decryptLocalFile4(encryptedTextFilepath, symmetricKeyFilepath, nonceFil
 
     var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
 
-    log.debug("CypherText: ", Buffer.from(cipherTextBuf).toString());
-    log.debug("Nonce: ", nonceBuf.toString());
-    log.debug("symmetricKey: ", symmetricKeyBuf.toString());
+    log.debug("CypherText:", Buffer.from(cipherTextBuf).toString());
+    log.debug("Nonce:", nonceBuf.toString());
+    log.debug("symmetricKey:", symmetricKeyBuf.toString());
 
-    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
+    //var cipherTextBuf = Buffer.from(cypherText, 'hex');
 
     if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
             cipherTextBuf, nonceBuf, symmetricKeyBuf)) {
@@ -282,21 +285,57 @@ var server = net.createServer(function (socket) {
 
         switch (msg['cmd']) {
             case 'balance':
-                //console.log(transactionLog);
-                socket.write({cmd: 'balance', balance: reduce(transactionLog)});
+                if(msg.customerId) {
+                    if (customerIds.includes(msg.customerId)) {
+                        socket.write({cmd: 'balance', customerId: msg.customerId, balance: reduceCustomer(transactionLog, msg.customerId)});
+                    } else {
+                        socket.write('customerId is not registered. Please call register cmd first', msg);
+                    }
+                } else {
+                    socket.write('missing customerId', msg);
+                }
                 break;
 
             case 'deposit':
-                appendToTransactionLog(transactionLog, msg);
-                writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
-                socket.write({cmd: 'deposit', balance: reduce(transactionLog)});
+                if(msg.customerId) {
+                    if (customerIds.includes(msg.customerId)) {
+                        appendToTransactionLog(transactionLog, msg);
+                        writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
+                        socket.write({cmd: 'deposit', customerId: msg.customerId, balance: reduceCustomer(transactionLog, msg.customerId)});
+                    } else {
+                        socket.write('customerId is not registered. Please call register cmd first', msg);
+                    }
+                } else {
+                    socket.write('missing customerId', msg);
+                }
                 break;
 
             case 'withdraw':
-                appendToTransactionLog(transactionLog, msg);
-                //writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
-                writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
-                socket.write({cmd: 'withdraw', balance: reduce(transactionLog)});
+                if(msg.customerId) {
+                    if (customerIds.includes(msg.customerId)) {
+                        appendToTransactionLog(transactionLog, msg);
+                        //writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+                        writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
+                        socket.write({cmd: 'withdraw', customerId: msg.customerId, balance: reduceCustomer(transactionLog, msg.customerId)});
+                    } else {
+                        socket.write('customerId is not registered. Please call register cmd first', msg);
+                    }
+                } else {
+                    socket.write('missing customerId', msg);
+                }
+                break;
+
+            case 'register':
+
+                if(msg.customerId) {
+                    appendToTransactionLog(transactionLog, msg);
+                    customerIds.push(msg.customerId);
+                    //writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
+                    writeLocalEncryptedFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2), symmetricKeyBuf);
+                    socket.write({cmd: 'register', customerId: msg.customerId});
+                } else {
+                    socket.write('missing customerId: ', msg);
+                }
                 break;
 
             default:
@@ -317,7 +356,7 @@ if(!symmetricKeyBuf){
 
     symmetricKeyBuf = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES);
     sodium.randombytes_buf(symmetricKeyBuf);
-    writeLocalFile(symmetricKeyFilepath, Buffer.from(symmetricKeyBuf).toString('base64'));
+    writeLocalFile(symmetricKeyFilepath, Buffer.from(symmetricKeyBuf).toString('hex'));
     log.info("Generated new symmetric key '%s'", symmetricKeyFilepath)
 } else {
     log.info("Found '%s' file", symmetricKeyFilepath);
@@ -358,10 +397,12 @@ var transactionLogFileContentsEncrypted = readLocalFile(transactionLogFilepath, 
 if(transactionLogFileContentsEncrypted) {
     log.info("Found '%s' file", transactionLogFilepath);
     log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
+    // don't know why decrypting is so hard here: running the below command on cli seems to work. We use the same code
+    //     node js/decrypt.js $(cat bank_transactionLogs.encrypted) $(cat bank_symmetric.encryption.key.base64) $(cat bank_transactionLogs.encrypted.nonce)
     //var transactionLogFileContents = decryptLocalFile(transactionLogFilepath, symmetricKeyBuf, nonceBuf);
     //var transactionLogFileContents = decryptLocalFile2(transactionLogFilepath, symmetricKeyBuf);
     //var transactionLogFileContents = decryptContents(symmetricKeyBuf, nonceBuf, transactionLogFileContentsEncrypted);
-    var transactionLogFileContents = decryptLocalFile3(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
+    var transactionLogFileContents = decryptLocalFile4(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
     //var transactionLogFileContents = decryptLocalFile4(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
     log.debug("transactionLogFileContents: ", transactionLogFileContents);
 

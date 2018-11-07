@@ -3,8 +3,15 @@
  */
 
 // teller.js
-if (process.argv.length >= 3) {
-    //console.log(process.argv);
+if (process.argv.length >= 4) {
+    //logger config
+    var log4js = require('log4js');
+    log4js.configure({
+        appenders: { out: { type: 'stdout', layout: { type: 'colored' } } },
+        categories: { default: { appenders: ['out'], level: 'info' } }
+    });
+    var log = log4js.getLogger("bank");
+    log.level = 'debug'; // default level is OFF - which means no logs at all.
 
     var jsonStream = require('duplex-json-stream');
     var net = require('net');
@@ -12,37 +19,53 @@ if (process.argv.length >= 3) {
     var client = jsonStream(net.connect(3876));
 
     client.on('data', function (msg) {
-        console.log('Teller received:', msg);
+        log.info('Teller received:', msg);
 
     });
 
+    log.debug(process.argv);
 
     var command = process.argv[2];
     switch (command) {
+        case 'register':
+            if (process.argv.length == 4) {
+                var custId = process.argv[3];
+                client.end({cmd: command, customerId: custId});
+            } else {
+                log.error("ERROR: called 'register' cmd but missing customerId")
+            }
+            break;
         case 'balance':
-            client.end({cmd: 'balance'});
+            if (process.argv.length == 4) {
+                var custId = process.argv[3];
+                client.end({cmd: 'balance', customerId: custId});
+            } else {
+                log.error("ERROR: called 'balance' cmd but missing customerId")
+            }
             break;
 
         case 'deposit':
-            if (process.argv.length == 4) {
+            if (process.argv.length == 5) {
                 var numDeposit = process.argv[3];
-                client.end({cmd: command, amount: numDeposit});
+                var custId = process.argv[4];
+                client.end({cmd: command, amount: numDeposit, customerId: custId});
             } else {
-                console.log("ERROR: called deposit cmd but no value entered to deposit")
+                log.error("ERROR: called 'deposit' cmd but no value entered to deposit or missing customerId")
             }
             break;
         case 'withdraw':
-            if (process.argv.length == 4) {
+            if (process.argv.length == 5) {
                 var numDeposit = process.argv[3];
-                client.end({cmd: command, amount: numDeposit});
+                var custId = process.argv[4];
+                client.end({cmd: command, amount: numDeposit, customerId: custId});
             } else {
-                console.log("ERROR: called withdraw cmd but no value entered to withdraw")
+                log.error("ERROR: called withdraw cmd but no value entered to withdraw or missing customerId")
             }
             break;
 
         default:
             // Unknown command
-            console.log("unknown command: " + command)
+            log.error("unknown command: " + command);
             client.end("unknown command: ", command);
             break;
     }
@@ -54,5 +77,5 @@ if (process.argv.length >= 3) {
     //client.end({cmd: 'balance'}); //can be used to send a request and close the socket
 
 } else {
-    console.log("ERROR: pass in either balance or deposit command")
+    log.error("ERROR: pass in 'register', 'balance', 'withdraw' or 'deposit' command")
 }
