@@ -100,7 +100,7 @@ function readLocalFile(filepath, encoding="utf8") {
         return fs.readFileSync(filepath, encoding)
     } catch (exception) {
         log.info("'%s' file was NOT FOUND, starting from scratch", filepath);
-        log.debug(exception);
+        log.debug("readLocalFile(...)", exception);
         return null;
     }
 };
@@ -110,7 +110,7 @@ function readLocalFileIntoBuffer(filepath) {
         return fs.readFileSync(filepath)
     } catch (exception) {
         log.info("'%s' file was NOT FOUND, starting from scratch", filepath);
-        log.debug(exception);
+        log.debug("readLocalFileIntoBuffer(...)", exception);
         return null;
     }
 };
@@ -119,9 +119,9 @@ function verifyLog() {
     var verificationLog = [];
     //var equal = require('deep-equal');
     //for(let entry of transactionLog) {
-    log.debug(transactionLog);
+    log.debug("verifyLog() transactionLog =", transactionLog);
     for( var i = 0; i < transactionLog.length; i++) {
-        log.debug("verifyLog() entry = ", transactionLog[i])
+        log.debug("verifyLog() entry = ", transactionLog[i]);
         appendToTransactionLog(verificationLog, transactionLog[i].value);
     }
     log.debug("verifyLog() verificationLog = %s", JSON.stringify(verificationLog));
@@ -129,6 +129,18 @@ function verifyLog() {
 
     return JSON.stringify(verificationLog) === JSON.stringify(transactionLog);
     //return equal(newLog, transactionLog);
+}
+
+function regenerateCustomerList() {
+    "use strict";
+    for( var i = 0; i < transactionLog.length; i++) {
+        if (transactionLog[i].value.cmd == 'register') {
+            if (transactionLog[i].value.customerId) {
+                customerIds.push(transactionLog[i].value.customerId);
+                log.debug("regenerateCustomerList() customerId re-added = ", transactionLog[i].value.customerId);
+            }
+        }
+    }
 }
 
 function writeLocalEncryptedFile(filepath, fileContents, keyBuf) {
@@ -169,12 +181,12 @@ function decryptLocalFile(encryptedTextFilepath, nonceFilepath, symmetricKeyFile
     var nonceBuf = Buffer.from(nonce, "base64");
 
     var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-    log.debug("cipherText:", cipherText);
-    log.debug("cipherTextBuf:", cipherTextBuf.toString());
-    log.debug("nonce:", nonce);
-    log.debug("nonceBuf:", nonceBuf.toString());
-    log.debug("symmetricKey:", symmetricKey);
-    log.debug("symmetricKeyBuf:", symmetricKeyBuf.toString());
+    log.debug("decryptLocalFile(...) cipherText:", cipherText);
+    log.debug("decryptLocalFile(...) cipherTextBuf:", cipherTextBuf.toString());
+    log.debug("decryptLocalFile(...) nonce:", nonce);
+    log.debug("decryptLocalFile(...) nonceBuf:", nonceBuf.toString());
+    log.debug("decryptLocalFile(...) symmetricKey:", symmetricKey);
+    log.debug("decryptLocalFile(...) symmetricKeyBuf:", symmetricKeyBuf.toString());
 
     //var cipherTextBuf = Buffer.from(cypherText, 'hex');
 
@@ -265,7 +277,7 @@ log.info("Starting Bank server...");
 
 symmetricKeyBuf = readLocalFileIntoBuffer(symmetricKeyFilepath);
 if(!symmetricKeyBuf){
-    log.debug(symmetricKeyBuf);
+    log.debug("_main ", symmetricKeyBuf);
     log.warn("Failed to find '%s'. Generating new symmetric encryption key", symmetricKeyFilepath);
 
     symmetricKeyBuf = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES);
@@ -278,7 +290,7 @@ if(!symmetricKeyBuf){
 
 var nonceBuf = readLocalFileIntoBuffer(transactionLogFilepath + ".nonce");
 if(!nonceBuf) {
-    log.debug("nonceBuf: ", nonceBuf);
+    log.debug("_main nonceBuf: ", nonceBuf);
     log.warn("Failed to find '%s'. Generating new nonceBuf", transactionLogFilepath + ".nonce");
 
     nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
@@ -286,7 +298,7 @@ if(!nonceBuf) {
 
     writeLocalFile(transactionLogFilepath + ".nonce", Buffer.from(nonceBuf).toString('base64'));
     log.info("Generated new nonceBuf");
-    log.debug("New nonceBuf: ", nonceBuf);
+    log.debug("_main  New nonceBuf: ", nonceBuf);
 } else {
     log.info("Found '%s' file", transactionLogFilepath + ".nonce");
 }
@@ -296,26 +308,25 @@ if(privateKeystore) {
     log.info("Found '%s' file", privateKeystoreFilepath);
     myAccount = accounts.decrypt(privateKeystore, privateKeystorePassword);
 } else {
-    log.debug(privateKeystore);
+    log.debug("_main privateKeystore: ", privateKeystore);
     log.warn("Failed to find '%s'. Generating new key-pair", privateKeystoreFilepath);
 
     myAccount = accounts.create();
-    privateKeystore = myAccount.privateKey;
     writeLocalFile(privateKeystoreFilepath, JSON.stringify(myAccount.encrypt(privateKeystorePassword), null, 2));
     log.info("Generated new key-pair, public key: '%s'", myAccount.address);
-    log.debug("myAccount: ", myAccount);
+    log.debug("_main myAccount: ", myAccount);
 }
 
 
 var transactionLogFileContentsEncrypted = readLocalFile(transactionLogFilepath, "base64");
 if(transactionLogFileContentsEncrypted) {
     log.info("Found '%s' file", transactionLogFilepath);
-    log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
+    log.debug("_main transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
     var transactionLogFileContents = decryptLocalFile(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
-    log.debug("transactionLogFileContents: ", transactionLogFileContents);
+    log.debug("_main transactionLogFileContents: ", transactionLogFileContents);
 
     if (transactionLogFileContents) {
-        log.debug("parsing transactionLog into JSON");
+        log.debug("_main parsing transactionLog into JSON");
         transactionLog = JSON.parse(transactionLogFileContents);
     } else {
         log.warn("Something seems wrong with transactionLog contents. Creating an empty transactionLog");
@@ -323,7 +334,7 @@ if(transactionLogFileContentsEncrypted) {
     }
 
 } else {
-    log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
+    log.debug("_main transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
     log.warn("Failed to find '%s'. Generating new transactionLog", transactionLogFilepath);
 
     writeLocalFile(transactionLogFilepath, JSON.stringify(transactionLog, null, 2));
@@ -332,13 +343,14 @@ if(transactionLogFileContentsEncrypted) {
 
 
 if(transactionLog.length > 0 && !verifyLog()) {
-    log.debug("transactionLog: ", transactionLog);
+    log.debug("_main transactionLog: ", transactionLog);
     //log.warn("'%s' file has been modified, throwing away file contents.", transactionLogFilepath);
     //fs.truncate(transactionLogFilepath, 0,() => log.info("Done emptying '%s' contents", transactionLogFilepath));
     log.warn("'%s' file has been modified, ignoring file contents.", transactionLogFilepath);
     transactionLog = [];
 } else if (transactionLog.length > 0) {
     log.info("Found '%s' file. Verified transactions and all looks good", transactionLogFilepath)
+    regenerateCustomerList();
 }
 
 
