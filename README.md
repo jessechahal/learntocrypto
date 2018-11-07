@@ -3,11 +3,11 @@
 
 
 The goal of this project is to complete the assignments in [https://github.com/sodium-friends/learntocrypto](https://github.com/sodium-friends/learntocrypto)
-while replacing the usage of libsodium with Ethereum's Web3js library where ever possible.
+while replacing the usage of libsodium with Ethereum's [Web3js](https://web3js.readthedocs.io/en/1.0/index.html) library where ever possible.
 
 
 ## How to Run
-Make sure to run the appropriate commands to install npm modules from the package.json file
+Make sure to run the appropriate commands to install npm modules from the `package.json` file
 
 ```node js/bank.js```
 
@@ -29,6 +29,7 @@ Make sure to run the appropriate commands to install npm modules from the packag
 ### Notes
 - if you want to see older versions of the project (specific assignments) checkout older commits
   - i didn't commit after each assignment because I init'd the git repo a bit late :S
+- both bank.js & teller.js using a logging framework. You can change the level of logging between 'debug' & 'info' at the top of each file
 - ????
 
 

@@ -16,7 +16,7 @@ log4js.configure({
     categories: { default: { appenders: ['out'], level: 'info' } }
 });
 var log = log4js.getLogger("bank");
-log.level = 'debug'; // default level is OFF - which means no logs at all.
+log.level = 'info'; // default level is OFF - which means no logs at all.
 
 //web3 config
 var Web3 = require('web3');
@@ -130,11 +130,12 @@ function verifyLog() {
 
 function writeLocalEncryptedFile(filepath, fileContents, keyBuf) {
     "use strict";
-    var messageBuf = Buffer.from(fileContents, "utf8");
+    //TODO: update this so everything is saved as JSON. makes it so you can read it using require(...) instead of fs.()
+    var messageBuf = Buffer.from(fileContents);
     var nonceBuf = Buffer.alloc(sodium.crypto_secretbox_NONCEBYTES);
     sodium.randombytes_buf(nonceBuf); // insert random data into nonceBuf
     var cipherTextBuf = Buffer.alloc(messageBuf.length + sodium.crypto_secretbox_MACBYTES);
-    sodium.crypto_secretbox_easy(cipherTextBuf, messageBuf, Buffer.from(nonceBuf), Buffer.from(keyBuf));
+    sodium.crypto_secretbox_easy(cipherTextBuf, messageBuf, nonceBuf, keyBuf);
 
     fs.writeFile(filepath, cipherTextBuf.toString("base64"), (err) => {
         if (err) {
@@ -152,101 +153,25 @@ function writeLocalEncryptedFile(filepath, fileContents, keyBuf) {
     });
 };
 
-function decryptLocalFile(filepath, keyBuf, nonceBuf) {
+
+function decryptLocalFile(encryptedTextFilepath, nonceFilepath, symmetricKeyFilepath) {
     "use strict";
-    var cipherTextBuf = readLocalFileIntoBuffer(filepath);
-    log.debug("CypherText to decrypt: ", cipherTextBuf.toString());
+
+     var cipherText = readLocalFile(encryptedTextFilepath);
+     var symmetricKey = readLocalFile(symmetricKeyFilepath);
+     var nonce = readLocalFile(nonceFilepath);
+
+    var cipherTextBuf = Buffer.from(cipherText, "base64");
+    var symmetricKeyBuf = Buffer.from(symmetricKey, "base64");
+    var nonceBuf = Buffer.from(nonce, "base64");
 
     var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-
-    //var cipherTextBuf = Buffer.from(cypherText, 'base64');
-
-    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
-            cipherTextBuf, Buffer.from(nonceBuf), Buffer.from(keyBuf))) {
-        log.error('Decryption failed!');
-        //return null;
-        plainTextBuf.toString("base64")
-    } else {
-        log.info("decryption of contents completed");
-        return plainTextBuf.toString("utf8");
-    }
-}
-
-/*
-Read nonce directly from disk instead of having buffer passed in
- */
-function decryptLocalFile2(filepath, keyBuf) {
-    "use strict";
-    var cipherTextBuf = readLocalFileIntoBuffer(filepath);
-    var nonceBuf = readLocalFileIntoBuffer(filepath + ".nonce");
-    log.debug("CypherText to decrypt: ", Buffer.from(cipherTextBuf).toString());
-    log.debug("nonceBuf: ", nonceBuf.toString());
-
-    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-
-    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
-            cipherTextBuf, nonceBuf, Buffer.from(keyBuf))) {
-        log.error('Decryption failed!');
-        //return null;
-        plainTextBuf.toString("base64")
-    } else {
-        log.info("decryption of contents completed");
-        return plainTextBuf.toString("utf8");
-    }
-}
-
-/*
-attempt 3
-read all files directly from disk directly into buffer. Goal vs v2 is to prevent Buffer reuse
- */
-function decryptLocalFile3(encryptedTextFilepath, nonceFilepath, symmetricKeyFilepath) {
-    "use strict";
-    var cipherTextBuf = readLocalFileIntoBuffer(encryptedTextFilepath);
-    var symmetricKeyBuf = readLocalFileIntoBuffer(symmetricKeyFilepath);
-    var nonceBuf = readLocalFileIntoBuffer(nonceFilepath);
-
-    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-
-    log.debug("CypherText:", Buffer.from(cipherTextBuf).toString());
-    log.debug("Nonce:", nonceBuf.toString());
-    log.debug("SymmetricKey:", symmetricKeyBuf.toString());
-
-    if (!sodium.crypto_secretbox_open_easy(plainTextBuf,
-            cipherTextBuf, nonceBuf, symmetricKeyBuf)) {
-        log.error('Decryption failed!');
-        //return null;
-        plainTextBuf.toString("base64")
-    } else {
-        log.info("decryption of contents completed");
-        return plainTextBuf.toString("utf8");
-    }
-}
-
-/*
-attempt 4
-when reading files from disk as text and then put into buffer
- */
-function decryptLocalFile4(encryptedTextFilepath, nonceFilepath, symmetricKeyFilepath) {
-    "use strict";
-    /*
-    var cipherText = readLocalFile(encryptedTextFilepath, "base64").trim();
-    var symmetricKey = readLocalFile(symmetricKeyFilepath, "base64").trim();
-    var nonce = readLocalFile(nonceFilepath, "base64").trim();
-    */
-
-    var cipherText = readLocalFile(encryptedTextFilepath).trim();
-    var symmetricKey = readLocalFile(symmetricKeyFilepath).trim();
-    var nonce = readLocalFile(nonceFilepath).trim();
-
-    var cipherTextBuf = Buffer.from(cipherText);
-    var symmetricKeyBuf = Buffer.from(symmetricKey);
-    var nonceBuf = Buffer.from(nonce);
-
-    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-
-    log.debug("CypherText:", Buffer.from(cipherTextBuf).toString());
-    log.debug("Nonce:", nonceBuf.toString());
-    log.debug("symmetricKey:", symmetricKeyBuf.toString());
+    log.debug("cipherText:", cipherText);
+    log.debug("cipherTextBuf:", cipherTextBuf.toString());
+    log.debug("nonce:", nonce);
+    log.debug("nonceBuf:", nonceBuf.toString());
+    log.debug("symmetricKey:", symmetricKey);
+    log.debug("symmetricKeyBuf:", symmetricKeyBuf.toString());
 
     //var cipherTextBuf = Buffer.from(cypherText, 'hex');
 
@@ -261,20 +186,6 @@ function decryptLocalFile4(encryptedTextFilepath, nonceFilepath, symmetricKeyFil
     }
 }
 
-function decryptContents(keyBuf, nonceBuf, contents) {
-    "use strict";
-
-    var cipherTextBuf = Buffer.from(contents, "base64");
-    var plainTextBuf = Buffer.alloc(cipherTextBuf.length - sodium.crypto_secretbox_MACBYTES);
-
-    if (!sodium.crypto_secretbox_open_easy(plainTextBuf, cipherTextBuf, nonceBuf, Buffer.from(keyBuf))) {
-        log.error('Decryption failed!');
-        return null;
-    } else {
-        log.info("decryption of contents completed");
-        return plainTextBuf.toString()
-    }
-}
 
 //'main' method related commands below
 
@@ -356,7 +267,7 @@ if(!symmetricKeyBuf){
 
     symmetricKeyBuf = sodium.sodium_malloc(sodium.crypto_secretbox_KEYBYTES);
     sodium.randombytes_buf(symmetricKeyBuf);
-    writeLocalFile(symmetricKeyFilepath, Buffer.from(symmetricKeyBuf).toString('hex'));
+    writeLocalFile(symmetricKeyFilepath, Buffer.from(symmetricKeyBuf).toString('base64'));
     log.info("Generated new symmetric key '%s'", symmetricKeyFilepath)
 } else {
     log.info("Found '%s' file", symmetricKeyFilepath);
@@ -397,13 +308,7 @@ var transactionLogFileContentsEncrypted = readLocalFile(transactionLogFilepath, 
 if(transactionLogFileContentsEncrypted) {
     log.info("Found '%s' file", transactionLogFilepath);
     log.debug("transactionLogFileContentsEncrypted: ", transactionLogFileContentsEncrypted);
-    // don't know why decrypting is so hard here: running the below command on cli seems to work. We use the same code
-    //     node js/decrypt.js $(cat bank_transactionLogs.encrypted) $(cat bank_symmetric.encryption.key.base64) $(cat bank_transactionLogs.encrypted.nonce)
-    //var transactionLogFileContents = decryptLocalFile(transactionLogFilepath, symmetricKeyBuf, nonceBuf);
-    //var transactionLogFileContents = decryptLocalFile2(transactionLogFilepath, symmetricKeyBuf);
-    //var transactionLogFileContents = decryptContents(symmetricKeyBuf, nonceBuf, transactionLogFileContentsEncrypted);
-    var transactionLogFileContents = decryptLocalFile4(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
-    //var transactionLogFileContents = decryptLocalFile4(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
+    var transactionLogFileContents = decryptLocalFile(transactionLogFilepath, transactionLogFilepath + ".nonce", symmetricKeyFilepath);
     log.debug("transactionLogFileContents: ", transactionLogFileContents);
 
     if (transactionLogFileContents) {
